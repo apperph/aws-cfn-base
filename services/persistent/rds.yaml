@@ -1,0 +1,424 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an RDS Postgres cluster/instance and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  DatabaseName:
+    Description: 'The name of the database.'
+    Type: String
+
+  Engine:
+    Description: 'RDS Engine'
+    Type: String
+    AllowedValues:
+      - 'aurora'
+      - 'aurora-mysql'
+      - 'aurora-postgresql'
+      - 'mariadb'
+      - 'mysql'
+      - 'postgres'
+  EngineVersion:
+    Description: 'RDS Engine Version'
+    Type: String
+  ParameterGroupFamily:
+    Description: 'RDS Parameter Group Family Name'
+    Type: String
+  InstanceClass:
+    Description: 'RDS DB instance class'
+    Type: String
+    Default: 'db.t3.medium'
+  MultiAZ:
+    Description: 'Specifies whether the database instance is a multiple Availability Zone deployment.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  Port:
+    Description: 'The port number on which the DB accepts connections.'
+    Type: String
+    Default: '5432'
+
+  ClusterMode:
+    Description: 'Set to true to create a cluster instead of a single instance.'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+  InitialDBName:
+    Description: 'The name of the database to create when the DB instance/cluster is created. If this parameter is not specified, no database is created in the DB instance/cluster.'
+    Type: String
+    Default: ''
+  ExistingMasterCredentials:
+    Description: 'Secrets Manager Secret ARN to use as the master DB credentials. Must be a key-value pairs of username and password. If this parameter is not specified, it will generate a random password for the DB instance.'
+    Type: String
+    Default: ''
+  SnapshotIdentifier:
+    Description: 'Snapshot identifier to restore DB from snapshot.'
+    Type: String
+    Default: ''
+  CreateInstanceReplica:
+    Description: 'Creates a read replica for an RDS DB instance.'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  VpcId:
+    Description: 'VPC ID that will be associated with this resource.'
+    Type: String
+  SubnetIds:
+    Description: 'List of subnet IDs that will be associated with this resource.'
+    Type: CommaDelimitedList
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+  HasExistingMasterCredentials: !Not [!Equals [!Ref ExistingMasterCredentials, '']]
+  HasSnapshotIdentifier: !Not [!Equals [!Ref SnapshotIdentifier, '']]
+  CreateMasterCredentials: !Not [!Or [!Condition HasExistingMasterCredentials, !Condition HasSnapshotIdentifier]]
+  CreateInstance: !Equals [!Ref ClusterMode, 'false']
+  CreateCluster: !Equals [!Ref ClusterMode, 'true']
+  CreateInstanceReplica: !And [!Condition CreateInstance, !Equals [!Ref CreateInstanceReplica, 'true']]
+  HasSSMParameterIntegrationAndCreateCluster: !And [!Condition HasSSMParameterIntegration, !Condition CreateCluster]
+  MultiAZ: !Equals [!Ref MultiAZ, 'true']
+
+Resources:
+  MasterCredentials:
+    Condition: CreateMasterCredentials
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub 'RDS DB master credentials for ${DatabaseName}-${EnvironmentName}'
+      Name: !Sub '${EnvironmentName}-${DatabaseName}-master-credentials'
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "master"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  MonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: sts:AssumeRole
+      Description: String
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Path: /
+      RoleName: !Sub '${EnvironmentName}-${DatabaseName}-monitoring-role'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  SubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub 'Subnet group for ${EnvironmentName}-${DatabaseName}'
+      DBSubnetGroupName: !Sub '${EnvironmentName}-${DatabaseName}-subnet-group'
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for RDS ${EnvironmentName}-${DatabaseName}'
+      GroupName: !Sub '${EnvironmentName}-${DatabaseName}-rds-sg'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VpcId: !Ref VpcId
+
+  InstanceParameterGroup:
+    Condition: CreateInstance
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: !Ref ParameterGroupFamily
+      Description: !Sub 'Parameter group for ${EnvironmentName}-${DatabaseName}'
+
+  ClusterParameterGroup:
+    Condition: CreateCluster
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      Family: !Ref ParameterGroupFamily
+      Description: !Sub 'Parameter group for ${EnvironmentName}-${DatabaseName}'
+      Parameters:
+        log_statement: 'ddl'
+        log_min_duration_statement: 1000
+
+  Instance:
+    Condition: CreateInstance
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: '20'
+      CopyTagsToSnapshot: true
+      DBInstanceClass: !Ref InstanceClass
+      DBInstanceIdentifier: !Sub '${EnvironmentName}-${DatabaseName}'
+      DBName: !Ref InitialDBName
+      DBParameterGroupName: !Ref InstanceParameterGroup
+      DBSnapshotIdentifier: !Ref SnapshotIdentifier
+      DBSubnetGroupName: !Ref SubnetGroup
+      DeleteAutomatedBackups: false
+      EnablePerformanceInsights: true
+      Engine: !Ref Engine
+      EngineVersion: !Ref EngineVersion
+      MasterUsername:
+        Fn::If:
+          - HasSnapshotIdentifier
+          - !Ref 'AWS::NoValue'
+          - Fn::If:
+              - HasExistingMasterCredentials
+              - !Sub '{{resolve:secretsmanager:${ExistingMasterCredentials}:SecretString:username}}'
+              - !Sub '{{resolve:secretsmanager:${MasterCredentials}:SecretString:username}}'
+      MasterUserPassword:
+        Fn::If:
+          - HasSnapshotIdentifier
+          - !Ref 'AWS::NoValue'
+          - Fn::If:
+              - HasExistingMasterCredentials
+              - !Sub '{{resolve:secretsmanager:${ExistingMasterCredentials}:SecretString:password}}'
+              - !Sub '{{resolve:secretsmanager:${MasterCredentials}:SecretString:password}}'
+      MonitoringInterval: 5
+      MonitoringRoleArn: !GetAtt 'MonitoringRole.Arn'
+      MultiAZ: !If [MultiAZ, true, false]
+      Port: !Ref Port
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      StorageType: gp2
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VPCSecurityGroups:
+        - !GetAtt 'SecurityGroup.GroupId'
+
+  InstanceReplica:
+    Condition: CreateInstanceReplica
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: !Ref InstanceClass
+      DBInstanceIdentifier: !Sub '${EnvironmentName}-${DatabaseName}-replica'
+      EnablePerformanceInsights: true
+      Engine: !Ref Engine
+      PubliclyAccessible: false
+      SourceDBInstanceIdentifier: !Ref Instance
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  Cluster:
+    Condition: CreateCluster
+    Type: AWS::RDS::DBCluster
+    Properties:
+      CopyTagsToSnapshot: true
+      DatabaseName: !Ref InitialDBName
+      DBClusterIdentifier: !Sub '${EnvironmentName}-${DatabaseName}'
+      DBClusterParameterGroupName: !Ref ClusterParameterGroup
+      DBSubnetGroupName: !Ref SubnetGroup
+      Engine: !Ref Engine
+      EngineVersion: !Ref EngineVersion
+      MasterUsername:
+        Fn::If:
+          - HasSnapshotIdentifier
+          - !Ref 'AWS::NoValue'
+          - Fn::If:
+              - HasExistingMasterCredentials
+              - !Sub '{{resolve:secretsmanager:${ExistingMasterCredentials}:SecretString:username}}'
+              - !Sub '{{resolve:secretsmanager:${MasterCredentials}:SecretString:username}}'
+      MasterUserPassword:
+        Fn::If:
+          - HasSnapshotIdentifier
+          - !Ref 'AWS::NoValue'
+          - Fn::If:
+              - HasExistingMasterCredentials
+              - !Sub '{{resolve:secretsmanager:${ExistingMasterCredentials}:SecretString:password}}'
+              - !Sub '{{resolve:secretsmanager:${MasterCredentials}:SecretString:password}}'
+      Port: !Ref Port
+      SnapshotIdentifier: !If [HasSnapshotIdentifier, !Ref SnapshotIdentifier, !Ref 'AWS::NoValue']
+      StorageEncrypted: true
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VpcSecurityGroupIds:
+        - !GetAtt 'SecurityGroup.GroupId'
+
+  ClusterWriterInstance:
+    Condition: CreateCluster
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: !Ref InstanceClass
+      DBInstanceIdentifier: !Sub '${EnvironmentName}-${DatabaseName}-writer'
+      DBClusterIdentifier: !Ref Cluster
+      DBSubnetGroupName: !Ref SubnetGroup
+      EnablePerformanceInsights: true
+      Engine: !Ref Engine
+      PubliclyAccessible: false
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  ClusterReaderInstance:
+    Condition: CreateCluster
+    DependsOn: ClusterWriterInstance
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: !Ref InstanceClass
+      DBInstanceIdentifier: !Sub '${EnvironmentName}-${DatabaseName}-reader'
+      DBClusterIdentifier: !Ref Cluster
+      DBSubnetGroupName: !Ref SubnetGroup
+      EnablePerformanceInsights: true
+      Engine: !Ref Engine
+      PubliclyAccessible: false
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamMasterCredentialsArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/rds/${DatabaseName}/master-credentials/arn'
+      Type: 'String'
+      Description: !If [CreateMasterCredentials, !Ref MasterCredentials, '']
+      Value: !If [CreateMasterCredentials, !Ref MasterCredentials, '']
+
+  SSMParamMonitoringRoleArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/rds/${DatabaseName}/monitoring-role/arn'
+      Type: 'String'
+      Description: !GetAtt 'MonitoringRole.Arn'
+      Value: !GetAtt 'MonitoringRole.Arn'
+
+  SSMParamSecurityGroupId:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/rds/${DatabaseName}/security-group/id'
+      Type: 'String'
+      Description: !GetAtt 'SecurityGroup.GroupId'
+      Value: !GetAtt 'SecurityGroup.GroupId'
+
+  SSMParamReadEndpointAddress:
+    Condition: HasSSMParameterIntegrationAndCreateCluster
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/rds/${DatabaseName}/read-endpoint/address'
+      Type: 'String'
+      Description: !GetAtt 'SecurityGroup.GroupId'
+      Value: !GetAtt 'Cluster.ReadEndpoint.Address'
+
+  SSMParamEndpointAddress:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/rds/${DatabaseName}/endpoint/address'
+      Type: 'String'
+      Description: !GetAtt 'SecurityGroup.GroupId'
+      Value:
+        Fn::If:
+          - CreateInstance
+          - !GetAtt 'Instance.Endpoint.Address'
+          - Fn::If:
+            - CreateCluster
+            - !GetAtt 'Cluster.Endpoint.Address'
+            - '' # empty string
+
+  SSMParamEndpointPort:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/rds/${DatabaseName}/endpoint/port'
+      Type: 'String'
+      Description: !GetAtt 'SecurityGroup.GroupId'
+      Value:
+        Fn::If:
+          - CreateInstance
+          - !GetAtt 'Instance.Endpoint.Port'
+          - Fn::If:
+            - CreateCluster
+            - !GetAtt 'Cluster.Endpoint.Port'
+            - '' # empty string
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  MasterCredentialsSecretArn:
+    Description: 'Secrets Manager Secret ARN for the master credentials of the RDS instance/cluster.'
+    Value: !If [CreateMasterCredentials, !Ref MasterCredentials, '']
+    Export:
+      Name: !Sub '${AWS::StackName}:MasterCredentialsSecretArn'
+
+  SecurityGroupId:
+    Description: 'VPC Security Group ID used by the RDS instance/cluster.'
+    Value: !GetAtt 'SecurityGroup.GroupId'
+    Export:
+      Name: !Sub '${AWS::StackName}:SecurityGroupId'
+
+  ReadEndpointAddress:
+    Condition: CreateCluster
+    Description: 'RDS Read Endpoint Address'
+    Value: !GetAtt 'Cluster.ReadEndpoint.Address'
+    Export:
+      Name: !Sub '${AWS::StackName}:ReadEndpointAddress'
+
+  EndpointAddress:
+    Description: 'RDS Endpoint Address'
+    Value:
+      Fn::If:
+        - CreateInstance
+        - !GetAtt 'Instance.Endpoint.Address'
+        - Fn::If:
+          - CreateCluster
+          - !GetAtt 'Cluster.Endpoint.Address'
+          - '' # empty string
+    Export:
+      Name: !Sub '${AWS::StackName}:EndpointAddress'
+
+  EndpointPort:
+    Description: 'RDS Endpoint Port'
+    Value:
+      Fn::If:
+        - CreateInstance
+        - !GetAtt 'Instance.Endpoint.Port'
+        - Fn::If:
+          - CreateCluster
+          - !GetAtt 'Cluster.Endpoint.Port'
+          - '' # empty string
+    Export:
+      Name: !Sub '${AWS::StackName}:EndpointPort'

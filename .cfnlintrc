@@ -1,0 +1,10 @@
+templates:
+  - "services/**/*.yaml"
+  - "solutions/**/*.yaml"
+
+ignore_templates:
+  - "solutions/**/__templates__/**/*.yaml"
+
+ignore_checks:
+  - "E3001"
+  - "E1010"

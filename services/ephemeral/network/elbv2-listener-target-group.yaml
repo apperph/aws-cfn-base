@@ -1,0 +1,190 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an ELB Listener, Listener Rule, Target Group, and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  TargetName:
+    Description: 'The name of the ELB Target Group.'
+    Type: String
+
+  HealthCheckEnabled:
+    Description: 'Indicates whether health checks are enabled.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  HealthCheckIntervalSeconds:
+    Description: 'The approximate amount of time, in seconds, between health checks of an individual target.'
+    Type: Number
+    Default: 30
+  HealthCheckPath:
+    Description: 'The destination for health checks on the targets.'
+    Type: String
+    Default: '/'
+  HealthCheckPort:
+    Description: 'The port the load balancer uses when performing health checks on targets.'
+    Type: String
+    Default: 'traffic-port'
+  HealthCheckProtocol:
+    Description: 'The protocol the load balancer uses when performing health checks on targets.'
+    Type: String
+    Default: 'HTTP'
+  HealthCheckTimeoutSeconds:
+    Description: 'The amount of time, in seconds, during which no response from a target means a failed health check.'
+    Type: Number
+    Default: 5
+  HealthyThresholdCount:
+    Description: 'The number of consecutive health checks successes required before considering an unhealthy target healthy.'
+    Type: Number
+    Default: 5
+
+  TargetGroupDeregistrationDelay:
+    Description: 'The delay in seconds before de-registering targets from the target group.'
+    Type: Number
+    Default: 0
+
+  ListenerArn:
+    Description: 'The ARN of the ELB Listener.'
+    Type: String
+  ListenerRulePriority:
+    Description: 'The rule priority. A listener cannot have multiple rules with the same priority.'
+    Type: Number
+  ListenerHostHeader:
+    Description: 'The host header value to be used as the listener rule condition.'
+    Type: String
+
+  VpcId:
+    Description: 'VPC ID that will be associated with the Elastic Beanstalk Environment.'
+    Type: String
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+
+Resources:
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckEnabled: !Ref HealthCheckEnabled
+      HealthCheckIntervalSeconds: !Ref HealthCheckIntervalSeconds
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckPort: !Ref HealthCheckPort
+      HealthCheckProtocol: !Ref HealthCheckProtocol
+      HealthCheckTimeoutSeconds: !Ref HealthCheckTimeoutSeconds
+      HealthyThresholdCount: !Ref HealthyThresholdCount
+      Name: !Sub '${EnvironmentName}-${TargetName}'
+      Port: 80
+      Protocol: HTTP
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      TargetGroupAttributes:
+        - Key: 'deregistration_delay.timeout_seconds'
+          Value: !Ref TargetGroupDeregistrationDelay
+      TargetType: 'ip'
+      VpcId: !Ref VpcId
+
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: 'forward'
+      Conditions:
+        - Field: 'host-header'
+          Values:
+            - !Ref ListenerHostHeader
+      ListenerArn: !Ref ListenerArn
+      Priority: !Ref ListenerRulePriority
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamTargetGroupArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elbv2/target-groups/${TargetName}/arn'
+      Type: 'String'
+      Value: !Ref TargetGroup
+
+  SSMParamTargetGroupName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elbv2/target-groups/${TargetName}/name'
+      Type: 'String'
+      Value: !GetAtt 'TargetGroup.TargetGroupName'
+
+  SSMParamTargetGroupFullName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elbv2/target-groups/${TargetName}/full-name'
+      Type: 'String'
+      Value: !GetAtt 'TargetGroup.TargetGroupFullName'
+
+  SSMParamListenerRuleArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elbv2/target-groups/${TargetName}/listener-rule/arn'
+      Type: 'String'
+      Value: !Ref ListenerRule
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  TargetGroupArn:
+    Description: 'ELB Target Group ARN'
+    Value: !Ref TargetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}:TargetGroupArn'
+
+  TargetGroupName:
+    Description: 'ELB Target Group Name'
+    Value: !GetAtt 'TargetGroup.TargetGroupName'
+    Export:
+      Name: !Sub '${AWS::StackName}:TargetGroupName'
+
+  TargetGroupFullName:
+    Description: 'ELB Target Group Full Name'
+    Value: !GetAtt 'TargetGroup.TargetGroupFullName'
+    Export:
+      Name: !Sub '${AWS::StackName}:TargetGroupFullName'
+
+  ListenerRuleArn:
+    Description: 'ELB Listener Rule ARN'
+    Value: !Ref ListenerRule
+    Export:
+      Name: !Sub '${AWS::StackName}:ListenerRuleArn'
+
+  ListenerHostHeader:
+    Description: 'ELB Listener Host Header'
+    Value: !Ref ListenerHostHeader
+    Export:
+      Name: !Sub '${AWS::StackName}:ListenerHostHeader'

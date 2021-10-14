@@ -1,0 +1,186 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an OpenSearch domain and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  DomainName:
+    Description: 'The name of the domain.'
+    Type: String
+
+  Version:
+    Description: 'OpenSearch version'
+    Type: String
+    Default: '5.6'
+  AvailabilityZoneCount:
+    Description: 'Number of AZs that you want the domain to use. Enables zone awareness if set to more than 1.'
+    Type: Number
+    Default: 1
+  InstanceCount:
+    Description: 'OpenSearch Instance Count'
+    Type: Number
+    Default: 1
+  InstanceType:
+    Description: 'OpenSearch Instance Type'
+    Type: String
+    Default: 't3.small.elasticsearch'
+  EnableEncryptionAtRest:
+    Description: 'Enable OpenSearch encryption at rest.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  VpcId:
+    Description: 'VPC ID that will be associated with this resource.'
+    Type: String
+  SubnetIds:
+    Description: 'List of subnet IDs that will be associated with this resource.'
+    Type: CommaDelimitedList
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+  EnableEncryptionAtRest: !Equals [!Ref EnableEncryptionAtRest, 'true']
+  ZoneAwarenessEnabled: !Not [!Equals [!Ref AvailabilityZoneCount, 1]]
+
+Resources:
+  KmsKey:
+    Condition: EnableEncryptionAtRest
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'Encryption key for OpenSearch ${EnvironmentName}-${DomainName}'
+      Enabled: true
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: kms:*
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Resource: "*"
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  KmsKeyAlias:
+    Condition: EnableEncryptionAtRest
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${EnvironmentName}-${DomainName}-key'
+      TargetKeyId: !Ref KmsKey
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for OpenSearch ${EnvironmentName}-${DomainName}'
+      GroupName: !Sub '${EnvironmentName}-${DomainName}-opensearch-sg'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VpcId: !Ref VpcId
+
+  Domain:
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+      ClusterConfig:
+        InstanceCount: !Ref InstanceCount
+        InstanceType: !Ref InstanceType
+        ZoneAwarenessConfig:
+          Fn::If:
+            - ZoneAwarenessEnabled
+            - AvailabilityZoneCount: !Ref AvailabilityZoneCount
+            - !Ref 'AWS::NoValue'
+        ZoneAwarenessEnabled: !If [ZoneAwarenessEnabled, true, false]
+      DomainEndpointOptions:
+        EnforceHTTPS: true
+      DomainName: !Sub '${EnvironmentName}-${DomainName}'
+      EBSOptions:
+        EBSEnabled: true
+        VolumeSize: 20
+        VolumeType: 'gp2'
+      EngineVersion: !Ref Version
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VPCOptions:
+        SecurityGroupIds:
+          - !GetAtt 'SecurityGroup.GroupId'
+        SubnetIds: !Ref SubnetIds
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamSecurityGroupId:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/opensearch/${DomainName}/security-group/id'
+      Type: 'String'
+      Description: !GetAtt 'SecurityGroup.GroupId'
+      Value: !GetAtt 'SecurityGroup.GroupId'
+
+  SSMParamDomainArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/opensearch/${DomainName}/arn'
+      Type: 'String'
+      Description: !GetAtt 'Domain.Arn'
+      Value: !GetAtt 'Domain.Arn'
+
+  SSMParamDomainId:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/opensearch/${DomainName}/id'
+      Type: 'String'
+      Description: !Ref Domain
+      Value: !Ref Domain
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  SecurityGroupId:
+    Description: 'VPC Security Group ID used by the ElastiCache Redis cluster.'
+    Value: !GetAtt 'SecurityGroup.GroupId'
+    Export:
+      Name: !Sub '${AWS::StackName}:SecurityGroupId'
+
+  DomainArn:
+    Description: 'OpenSearch Domain ARN'
+    Value: !GetAtt 'Domain.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:Arn'
+
+  DomainId:
+    Description: 'OpenSearch Domain ID'
+    Value: !Ref Domain
+    Export:
+      Name: !Sub '${AWS::StackName}:DomainId'

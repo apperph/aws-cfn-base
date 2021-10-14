@@ -1,0 +1,533 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an OpenSearch domain and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  ApplicationName:
+    Description: 'The name of the Elastic Beanstalk Application.'
+    Type: String
+
+  VersionLifecycleMaxAgeDays:
+    Description: 'Sets the maximum age that old version lives. Disables version lifecycle by max age when set to 0.'
+    Type: Number
+    Default: 0
+  VersionLifecycleMaxCount:
+    Description: 'Sets the maximum count of old versions to keep. Disables version lifecycle by count when set to 0.'
+    Type: Number
+    Default: 0
+  VersionLifecycleDeleteFromS3:
+    Description: 'Specifies whether to delete old versions that meet the version lifecycle max age or max count from S3.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  SolutionStackName:
+    Description: 'The name of an Elastic Beanstalk solution stack (platform version) to use with the environment.'
+    Type: String
+  TierName:
+    Description: 'The name of this environment tier.'
+    Type: String
+    Default: 'WebServer'
+  TierType:
+    Description: 'The type of this environment tier.'
+    Type: String
+    Default: 'Standard'
+
+  HealthCheckUrl:
+    Description: 'Health check URL for the application.'
+    Type: String
+    Default: '/'
+
+  AutoscalingEnableCapacityRebalancing:
+    Description: 'Specifies whether to enable the Capacity Rebalancing feature for Spot Instances in your Auto Scaling Group.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  AutoscalingMinSize:
+    Description: 'The minimum number of instances that you want in your Auto Scaling group.'
+    Type: Number
+    Default: 2
+  AutoscalingMaxSize:
+    Description: 'The maximum number of instances that you want in your Auto Scaling group.'
+    Type: Number
+    Default: 4
+
+  RollingUpdateEnabled:
+    Description: 'Enables rolling updates for an environment.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  RollingUpdateType:
+    Description: 'Specifies the rolling update type for an environment.'
+    Type: String
+    Default: 'Health'
+    AllowedValues:
+      - 'Time'
+      - 'Health'
+      - 'Immutable'
+  RollingUpdateMinInstancesInService:
+    Description: 'The minimum number of instances that must be in service within the Auto Scaling group while other instances are terminated.'
+    Type: Number
+    Default: 1
+
+  DeploymentPolicy:
+    Description: 'The deployment policy for application version deployments.'
+    Type: String
+    Default: 'Rolling'
+    AllowedValues:
+      - 'AllAtOnce'
+      - 'Rolling'
+      - 'RollingWithAdditionalBatch'
+      - 'Immutable'
+      - 'TrafficSplitting'
+  DeploymentPolicyTimeout:
+    Description: 'The amount of time, in seconds, to wait for an instance to complete executing commands.'
+    Type: Number
+    Default: 600
+  DeploymentPolicyBatchSizeType:
+    Description: 'The type of number that iss specified in BatchSize.'
+    Type: String
+    Default: 'Percentage'
+    AllowedValues:
+      - 'Percentage'
+      - 'Fixed'
+  DeploymentPolicyBatchSize:
+    Description: 'The percentage or the fixed number of Amazon EC2 instances in the Auto Scaling group to simultaneously perform deployments on.'
+    Type: Number
+    Default: 50
+
+  EnableSpotInstances:
+    Description: 'Enable Spot Instance requests for your environment.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  InstanceTypes:
+    Description: 'A comma-separated list of instance types that you want your environment to use. When Spot Instances are disabled, only the first instance type on the list is used.'
+    Type: CommaDelimitedList
+    Default: 't3.micro'
+
+  SharedLoadBalancerArn:
+    Description: 'Specifies the ARN of the shared Elastic Load Balancer. Requires stack recreate on update.'
+    Type: String
+    Default: ''
+  SharedLoadBalancerUseHttps:
+    Description: 'Enables and enforces HTTPS listener for the shared Elastic Load Balancer. This will disable the default (HTTP) listener when enabled. Requires stack recreate on update.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  SharedLoadBalancerHostHeader:
+    Description: 'The host name to match when using a shared Elastic Load Balancer. Requires stack recreate when setting/unsetting this parameter.'
+    Type: String
+    Default: ''
+
+  ELBScheme:
+    Description: 'Specifies the scheme of the Elastic Load Balancer.'
+    Type: String
+    Default: 'public'
+    AllowedValues:
+      - 'internal'
+      - 'public'
+  ELBSubnetIds:
+    Description: 'List of subnet IDs that will be associated with the Elastic Load Balancer.'
+    Type: CommaDelimitedList
+    Default: ''
+  ELBSSLCertificateArns:
+    Description: 'The Amazon Resource Name (ARN) of an SSL certificate to bind to the listener.'
+    Type: CommaDelimitedList
+    Default: ''
+
+  AssociatePublicIpAddress:
+    Description: 'Specifies whether to launch instances with public IP addresses in your Amazon VPC.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  VpcId:
+    Description: 'VPC ID that will be associated with the Elastic Beanstalk Environment.'
+    Type: String
+  SubnetIds:
+    Description: 'List of subnet IDs that will be associated with the Elastic Beanstalk Application.'
+    Type: CommaDelimitedList
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+  HasVersionLifecycleMaxAgeRuleEnabled: !Not [!Equals [!Ref VersionLifecycleMaxAgeDays, 0]]
+  HasVersionLifecycleMaxCountRuleEnabled: !Not [!Equals [!Ref VersionLifecycleMaxCount, 0]]
+  HasELBSSLCertificateArns: !Not [!Equals [!Join ['', !Ref ELBSSLCertificateArns], '']]
+  HasELBSubnetIds: !Not [!Equals [!Join ['', !Ref ELBSubnetIds], '']]
+  HasSharedLoadBalancerHostHeader: !Not [!Equals [!Ref SharedLoadBalancerHostHeader, '']]
+  SharedLoadBalancerEnabled: !Not [!Equals [!Ref SharedLoadBalancerArn, '']]
+  SharedLoadBalancerUseHttps: !Equals [!Ref SharedLoadBalancerUseHttps, 'true']
+
+Resources:
+  ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: elasticbeanstalk.amazonaws.com
+            Action: sts:AssumeRole
+      Description: !Sub 'Service role for Elastic Beanstalk Application ${ApplicationName}'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AutoScalingFullAccess'
+        - 'arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess'
+        - 'arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth'
+        - 'arn:aws:iam::aws:policy/AWSElasticBeanstalkManagedUpdatesCustomerRolePolicy'
+      Path: /
+      RoleName: !Sub '${EnvironmentName}-${ApplicationName}-eb-service-role'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Description: !Sub 'Instance role for Elastic Beanstalk Application ${ApplicationName}'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier'
+        - 'arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker'
+        - 'arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth'
+      Path: /
+      RoleName: !Sub '${EnvironmentName}-${ApplicationName}-eb-instance-role'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${EnvironmentName}-${ApplicationName}'
+      Roles:
+        - !Ref InstanceRole
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for Elastic Beanstalk Application ${EnvironmentName}-${ApplicationName}'
+      GroupName: !Sub '${EnvironmentName}-${ApplicationName}-elasticbeanstalk-sg'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-${ApplicationName}-elasticbeanstalk-sg'
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VpcId: !Ref VpcId
+
+  Application:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: !Sub '${EnvironmentName}-${ApplicationName}'
+      Description: !Sub 'Elastic Beanstalk Application for ${ApplicationName}'
+      ResourceLifecycleConfig:
+        VersionLifecycleConfig:
+          MaxAgeRule:
+            Fn::If:
+              - HasVersionLifecycleMaxAgeRuleEnabled
+              - DeleteSourceFromS3: !Ref VersionLifecycleDeleteFromS3
+                Enabled: true
+                MaxAgeInDays: !Ref VersionLifecycleMaxAgeDays
+              - !Ref 'AWS::NoValue'
+          MaxCountRule:
+            Fn::If:
+              - HasVersionLifecycleMaxCountRuleEnabled
+              - DeleteSourceFromS3: !Ref VersionLifecycleDeleteFromS3
+                Enabled: true
+                MaxCount: !Ref VersionLifecycleMaxCount
+              - !Ref 'AWS::NoValue'
+
+  BaseConfigurationTemplate:
+    Type: AWS::ElasticBeanstalk::ConfigurationTemplate
+    Properties:
+      ApplicationName: !Ref Application
+      Description: !Sub '${EnvironmentName}-${ApplicationName}'
+      OptionSettings:
+        # https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/command-options-general.html
+        - Namespace: 'aws:autoscaling:asg'
+          OptionName: 'EnableCapacityRebalancing'
+          Value: !Ref AutoscalingEnableCapacityRebalancing
+        - Namespace: 'aws:autoscaling:asg'
+          OptionName: 'MinSize'
+          Value: !Ref AutoscalingMinSize
+        - Namespace: 'aws:autoscaling:asg'
+          OptionName: 'MaxSize'
+          Value: !Ref AutoscalingMaxSize
+
+        - Namespace: 'aws:autoscaling:launchconfiguration'
+          OptionName: 'IamInstanceProfile'
+          Value: !GetAtt 'InstanceProfile.Arn'
+        - Namespace: 'aws:autoscaling:launchconfiguration'
+          OptionName: 'SecurityGroups'
+          Value: !GetAtt 'SecurityGroup.GroupId'
+
+        - Namespace: 'aws:autoscaling:updatepolicy:rollingupdate'
+          OptionName: 'RollingUpdateEnabled'
+          Value: !Ref RollingUpdateEnabled
+        - Namespace: 'aws:autoscaling:updatepolicy:rollingupdate'
+          OptionName: 'RollingUpdateType'
+          Value: !Ref RollingUpdateType
+        - Namespace: 'aws:autoscaling:updatepolicy:rollingupdate'
+          OptionName: 'MinInstancesInService'
+          Value: !Ref RollingUpdateMinInstancesInService
+
+        - Namespace: 'aws:elasticbeanstalk:command'
+          OptionName: 'DeploymentPolicy'
+          Value: !Ref DeploymentPolicy
+        - Namespace: 'aws:elasticbeanstalk:command'
+          OptionName: 'Timeout'
+          Value: !Ref DeploymentPolicyTimeout
+        - Namespace: 'aws:elasticbeanstalk:command'
+          OptionName: 'BatchSizeType'
+          Value: !Ref DeploymentPolicyBatchSizeType
+        - Namespace: 'aws:elasticbeanstalk:command'
+          OptionName: 'BatchSize'
+          Value: !Ref DeploymentPolicyBatchSize
+
+        - Namespace: 'aws:ec2:instances'
+          OptionName: 'EnableSpot'
+          Value: !Ref EnableSpotInstances
+        - Namespace: 'aws:ec2:instances'
+          OptionName: 'InstanceTypes'
+          Value: !Join [',', !Ref InstanceTypes]
+
+        - Namespace: 'aws:ec2:vpc'
+          OptionName: 'VPCId'
+          Value: !Ref VpcId
+        - Namespace: 'aws:ec2:vpc'
+          OptionName: 'Subnets'
+          Value: !Join [',', !Ref SubnetIds]
+        - Namespace: 'aws:ec2:vpc'
+          OptionName: 'AssociatePublicIpAddress'
+          Value: !Ref AssociatePublicIpAddress
+
+        - Namespace: 'aws:elasticbeanstalk:application'
+          OptionName: 'Application Healthcheck URL'
+          Value: !Ref HealthCheckUrl
+        - Namespace: 'aws:elasticbeanstalk:environment'
+          OptionName: 'LoadBalancerType'
+          Value: 'application'
+        - Namespace: 'aws:elasticbeanstalk:environment'
+          OptionName: 'ServiceRole'
+          Value: !GetAtt 'ServiceRole.Arn'
+
+        - Namespace: 'aws:ec2:vpc'
+          OptionName: 'ELBScheme'
+          Value: !Ref ELBScheme
+
+        - Fn::If:
+          - HasELBSubnetIds
+          - Namespace: 'aws:ec2:vpc'
+            OptionName: 'ELBSubnets'
+            Value: !Join [',', !Ref ELBSubnetIds]
+          - !Ref 'AWS::NoValue'
+
+        - Fn::If:
+          - HasELBSSLCertificateArns
+          - Namespace: 'aws:elbv2:listener:443'
+            OptionName: 'Protocol'
+            Value: 'HTTPS'
+          - !Ref 'AWS::NoValue'
+        - Fn::If:
+          - HasELBSSLCertificateArns
+          - Namespace: 'aws:elbv2:listener:443'
+            OptionName: 'SSLCertificateArns'
+            Value: !Join [',', !Ref ELBSSLCertificateArns]
+          - !Ref 'AWS::NoValue'
+      SolutionStackName: !Ref SolutionStackName
+
+  SharedELBConfigurationTemplate:
+    Condition: SharedLoadBalancerEnabled
+    Type: AWS::ElasticBeanstalk::ConfigurationTemplate
+    Properties:
+      ApplicationName: !Ref Application
+      Description: !Sub '${EnvironmentName}-${ApplicationName}-with-shared-elb'
+      OptionSettings:
+        # https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/command-options-general.html
+        - Namespace: 'aws:elasticbeanstalk:environment'
+          OptionName: 'LoadBalancerIsShared'
+          Value: 'true'
+        - Namespace: 'aws:elbv2:loadbalancer'
+          OptionName: 'SharedLoadBalancer'
+          Value: !Ref SharedLoadBalancerArn
+
+        - Fn::If:
+          - HasSharedLoadBalancerHostHeader
+          - Namespace: 'aws:elbv2:listenerrule:CustomHostHeaders'
+            OptionName: 'HostHeaders'
+            Value: !Ref SharedLoadBalancerHostHeader
+          - !Ref 'AWS::NoValue'
+        - Fn::If:
+          - HasSharedLoadBalancerHostHeader
+          - Namespace: 'aws:elbv2:listenerrule:CustomHostHeaders'
+            OptionName: 'Priority'
+            Value: '1'
+          - !Ref 'AWS::NoValue'
+
+        - Fn::If:
+          - SharedLoadBalancerUseHttps
+          - Namespace: 'aws:elbv2:listener:443'
+            OptionName: 'Rules'
+            Value:
+              Fn::If:
+                - HasSharedLoadBalancerHostHeader
+                - 'default,CustomHostHeaders'
+                - 'default'
+          - !Ref 'AWS::NoValue'
+      SolutionStackName: !Ref SolutionStackName
+      SourceConfiguration:
+        ApplicationName: !Ref Application
+        TemplateName: !Ref BaseConfigurationTemplate
+
+  Environment:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      ApplicationName: !Ref Application
+      EnvironmentName: !Sub '${EnvironmentName}-${ApplicationName}'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      TemplateName: !If [SharedLoadBalancerEnabled, !Ref SharedELBConfigurationTemplate, !Ref BaseConfigurationTemplate]
+      Tier:
+        Name: !Ref TierName
+        Type: !Ref TierType
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamSecurityGroupId:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elasticbeanstalk/${ApplicationName}/security-group/id'
+      Type: 'String'
+      Value: !GetAtt 'SecurityGroup.GroupId'
+
+  SSMParamServiceRoleArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elasticbeanstalk/${ApplicationName}/service-role/arn'
+      Type: 'String'
+      Value: !GetAtt 'ServiceRole.Arn'
+
+  SSMParamInstanceRoleArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elasticbeanstalk/${ApplicationName}/instance-role/arn'
+      Type: 'String'
+      Value: !GetAtt 'InstanceRole.Arn'
+
+  SSMParamApplicationName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elasticbeanstalk/${ApplicationName}/name'
+      Type: 'String'
+      Value: !Ref Application
+
+  SSMParamEnvironmentName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elasticbeanstalk/${ApplicationName}/environment/name'
+      Type: 'String'
+      Value: !Ref Environment
+
+  SSMParamEnvironmentEndpointURL:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/elasticbeanstalk/${ApplicationName}/environment/endpoint-url'
+      Type: 'String'
+      Value:
+        Fn::If:
+          - HasSharedLoadBalancerHostHeader
+          - !Ref SharedLoadBalancerHostHeader
+          - !GetAtt 'Environment.EndpointURL'
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  SecurityGroupId:
+    Description: 'Elastic Beanstalk EC2 Instances Security Group ID.'
+    Value: !GetAtt 'SecurityGroup.GroupId'
+    Export:
+      Name: !Sub '${AWS::StackName}:SecurityGroupId'
+
+  ServiceRoleArn:
+    Description: 'Service Role used by Elastic Beanstalk.'
+    Value: !GetAtt 'ServiceRole.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:ServiceRoleArn'
+
+  InstanceRoleArn:
+    Description: 'Service Role used by EC2 Instances.'
+    Value: !GetAtt 'InstanceRole.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:InstanceRoleArn'
+
+  ApplicationName:
+    Description: 'Elastic Beanstalk Application Name.'
+    Value: !Ref Application
+    Export:
+      Name: !Sub '${AWS::StackName}:ApplicationName'
+
+  EnvironmentName:
+    Description: 'Elastic Beanstalk Environment Name.'
+    Value: !Ref Environment
+    Export:
+      Name: !Sub '${AWS::StackName}:EnvironmentName'
+
+  EnvironmentEndpointURL:
+    Description: 'The URL to the load balancer.'
+    Value:
+      Fn::If:
+        - HasSharedLoadBalancerHostHeader
+        - !Ref SharedLoadBalancerHostHeader
+        - !GetAtt 'Environment.EndpointURL'
+    Export:
+      Name: !Sub '${AWS::StackName}:EnvironmentEndpointURL'

@@ -1,0 +1,26 @@
+name: CloudFormation CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Run linters
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup
+        run: pip3 install yamllint cfn-lint
+
+      - name: Run yamllint
+        run: yamllint .
+
+      - name: Run cfn-lint
+        run: cfn-lint

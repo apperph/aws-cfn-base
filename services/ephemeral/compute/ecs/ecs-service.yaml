@@ -1,0 +1,581 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an Elastic Container Service Cluster and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  ServiceName:
+    Description: 'The name of the Elastic Container Service.'
+    Type: String
+  ClusterName:
+    Description: 'The name of the Elastic Container Service Cluster.'
+    Type: String
+
+  CapacityProviderName:
+    Description: 'The short name of the capacity provider to be used in this ECS Service.'
+    Type: String
+    Default: ''
+  DeploymentControllerName:
+    Description: 'The deployment controller type to use.'
+    Type: String
+    Default: 'ECS'
+    AllowedValues:
+      - 'ECS'
+      - 'CODE_DEPLOY'
+      - 'EXTERNAL'
+  LaunchType:
+    Description: 'The launch type on which to run your service.'
+    Type: String
+    Default: 'FARGATE'
+    AllowedValues:
+      - 'EC2'
+      - 'FARGATE'
+
+  DesiredCount:
+    Description: 'The number of instantiations of the specified task definition to place and keep running on your cluster.'
+    Type: Number
+    Default: 1
+  MaximumPercent:
+    Description: 'For rolling updates, the upper limit on the number of tasks in a service that are allowed in the RUNNING or PENDING state during a deployment.'
+    Type: Number
+    Default: 200
+  MinimumHealthyPercent:
+    Description: 'For rolling updates, the minimum healthy percent represents a lower limit on the number of tasks in a service that must remain in the RUNNING state during a deployment.'
+    Type: Number
+    Default: 50
+
+  TaskCpu:
+    Description: 'The number of cpu units used by the task. Required when using Fargate.'
+    Type: String
+    Default: '512'
+  TaskMemory:
+    Description: 'The number of memory units used by the task. Required when using Fargate.'
+    Type: String
+    Default: '1024'
+
+  AssignPublicIp:
+    Description: 'Specifies whether the task elastic network interface receives a public IP address.'
+    Type: String
+    Default: 'DISABLED'
+    AllowedValues:
+      - 'ENABLED'
+      - 'DISABLED'
+  AllowedCIDR:
+    Description: 'List of allowed CIDRs to connect to the container port.'
+    Type: String
+    Default: ''
+
+  ELBSecurityGroupId:
+    Description: 'The VPC Security Group ID of ELB to be used by this service. Set this parameter to enable ELB support.'
+    Type: String
+    Default: ''
+  ELBTargetGroupArn:
+    Description: 'The ARN of the Elastic Load Balancing target group or groups associated with a service or task set. Set this parameter to enable ELB support.'
+    Type: String
+    Default: ''
+
+  ServiceNamespaceId:
+    Description: 'The namespace ID of the AWS CloudMap Namespace. Set this parameter to enable service discovery.'
+    Type: String
+    Default: ''
+  ServiceRoutingPolicy:
+    Description: 'The routing policy that you want to apply to all Route 53 DNS records that AWS Cloud Map creates when you register an instance and specify this service.'
+    Type: String
+    Default: 'WEIGHTED'
+    AllowedValues:
+      - 'MULTIVALUE'
+      - 'WEIGHTED'
+
+  EnableContainerPort:
+    Description: 'Specifies whether the container forwards port to the network interface.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  ContainerPort:
+    Description: 'The port on the container to associate with the load balancer.'
+    Type: Number
+    Default: 3000
+
+  AppImageArn:
+    Description: 'ECR Repository ARN that will be used by the task definition of this ECS Service.'
+    Type: String
+  AppImageUri:
+    Description: 'Docker Image URI that will be used by the task definition of this ECS Service.'
+    Type: String
+  AppCommand:
+    Description: 'The command that will be passed to the container.'
+    Type: CommaDelimitedList
+    Default: ''
+  AppEnvBucket:
+    Description: 'S3 Bucket ARN that contains the environment file.'
+    Type: String
+    Default: ''
+  AppEnvFile:
+    Description: 'Path to the S3 Object that will be used as the env file of the task in this ECS Service.'
+    Type: String
+    Default: ''
+  AppMemorySoftLimit:
+    Description: 'The soft limit (in MiB) of memory to reserve for the container. When system memory is under heavy contention, Docker attempts to keep the container memory to this soft limit.'
+    Type: String
+    Default: '512'
+  AppMemoryHardLimit:
+    Description: 'The amount (in MiB) of memory to present to the container. If your container attempts to exceed the memory specified here, the container is killed.'
+    Type: String
+    Default: '768'
+
+  WorkerImageArn:
+    Description: 'ECR Repository ARN that will be used by the task definition of this ECS Service.'
+    Type: String
+    Default: ''
+  WorkerImageUri:
+    Description: 'Docker Image URI that will be used by the task definition of this ECS Service.'
+    Type: String
+    Default: ''
+  WorkerCommand:
+    Description: 'The command that will be passed to the container.'
+    Type: CommaDelimitedList
+    Default: ''
+  WorkerEnvBucket:
+    Description: 'S3 Bucket ARN that contains the environment file.'
+    Type: String
+    Default: ''
+  WorkerEnvFile:
+    Description: 'Path to the S3 Object that will be used as the env file of the task in this ECS Service.'
+    Type: String
+    Default: ''
+  WorkerMemorySoftLimit:
+    Description: 'The soft limit (in MiB) of memory to reserve for the container. When system memory is under heavy contention, Docker attempts to keep the container memory to this soft limit.'
+    Type: String
+    Default: '512'
+  WorkerMemoryHardLimit:
+    Description: 'The amount (in MiB) of memory to present to the container. If your container attempts to exceed the memory specified here, the container is killed.'
+    Type: String
+    Default: '768'
+
+  VpcId:
+    Description: 'VPC ID that will be associated with the Elastic Beanstalk Environment.'
+    Type: String
+  SubnetIds:
+    Description: 'List of subnet IDs that will be associated with the Elastic Beanstalk Application.'
+    Type: CommaDelimitedList
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+  HasCapacityProviderName: !Not [!Equals [!Ref CapacityProviderName, '']]
+  HasAppCommand: !Not [!Equals [!Join ['', !Ref AppCommand], '']]
+  HasWorkerCommand: !Not [!Equals [!Join ['', !Ref WorkerCommand], '']]
+  HasAppEnvFile: !And [!Not [!Equals [!Ref AppEnvBucket, '']], !Not [!Equals [!Ref AppEnvFile, '']]]
+  HasWorkerEnvFile: !And [!Not [!Equals [!Ref WorkerEnvBucket, '']], !Not [!Equals [!Ref WorkerEnvFile, '']]]
+  HasWorkerContainer: !And [!Not [!Equals [!Ref WorkerImageArn, '']], !Not [!Equals [!Ref WorkerImageUri, '']]]
+  HasAllowedCIDR: !Not [!Equals [!Ref AllowedCIDR, '']]
+  EnableContainerPort: !Equals [!Ref EnableContainerPort, 'true']
+  EnableELB: !And [!Not [!Equals [!Ref ELBSecurityGroupId, '']], !Not [!Equals [!Ref ELBTargetGroupArn, '']]]
+  EnableContainerPortAndEnableELB: !And [!Condition EnableContainerPort, !Condition EnableELB]
+  EnableServiceDiscovery: !Not [!Equals [!Ref ServiceNamespaceId, '']]
+  EnableContainerPortAndEnableServiceDiscovery: !And [!Condition EnableContainerPort, !Condition EnableServiceDiscovery]
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for Elastic Container Service ${EnvironmentName}-${ServiceName} Service'
+      GroupName: !Sub '${EnvironmentName}-${ServiceName}-ecs-service-sg'
+      SecurityGroupIngress:
+        - Fn::If:
+          - EnableContainerPortAndEnableELB
+          - Description: 'Allow traffic from ELB'
+            FromPort: !Ref ContainerPort
+            IpProtocol: 'tcp'
+            SourceSecurityGroupId: !Ref ELBSecurityGroupId
+            ToPort: !Ref ContainerPort
+          - !Ref 'AWS::NoValue'
+        - Fn::If:
+          - HasAllowedCIDR
+          - CidrIp: !Ref AllowedCIDR
+            Description: 'Allow traffic from CIDR'
+            IpProtocol: '-1'
+          - !Ref 'AWS::NoValue'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-${ServiceName}-ecs-service-sg'
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VpcId: !Ref VpcId
+
+  TaskLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '${EnvironmentName}-${ServiceName}-ecs-task'
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Description: 'IAM Role ARN to be used as ECS execution role'
+      Policies:
+        - PolicyName: 'AllowAccessToLogGroup'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                Resource: !GetAtt 'TaskLogGroup.Arn'
+              - Effect: Allow
+                Action:
+                  - logs:PutLogEvents
+                Resource: !Sub '${TaskLogGroup.Arn}:*'
+        - PolicyName: 'AllowAccessToECRRepository'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: !Ref AppImageArn
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+        - Fn::If:
+          - HasAppEnvFile
+          - PolicyName: 'AllowAccessToS3AppEnvFile'
+            PolicyDocument:
+              Version: 2012-10-17
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:GetBucketLocation
+                  Resource: !Ref AppEnvBucket
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                  Resource: !Join ['/', [!Ref AppEnvBucket, !Ref AppEnvFile]]
+          - !Ref 'AWS::NoValue'
+        - Fn::If:
+          - HasWorkerEnvFile
+          - PolicyName: 'AllowAccessToS3WorkerEnvFile'
+            PolicyDocument:
+              Version: 2012-10-17
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:GetBucketLocation
+                  Resource: !Ref WorkerEnvBucket
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                  Resource: !Join ['/', [!Ref WorkerEnvBucket, !Ref WorkerEnvFile]]
+          - !Ref 'AWS::NoValue'
+      RoleName: !Sub '${EnvironmentName}-${ServiceName}-execution-role'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Description: 'IAM Role ARN to be used by the ECS task itself'
+      Policies:
+        - PolicyName: 'AllowAccessToSSM'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: "*"
+      RoleName: !Sub '${EnvironmentName}-${ServiceName}-task-role'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  ServiceRegistry:
+    Condition: EnableServiceDiscovery
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Description: !Sub 'Service registry for ${EnvironmentName}-${ServiceName}'
+      DnsConfig:
+        DnsRecords:
+          - TTL: 60
+            Type: 'A'
+          - TTL: 60
+            Type: 'SRV'
+        NamespaceId: !Ref ServiceNamespaceId
+        RoutingPolicy: !Ref ServiceRoutingPolicy
+      Name: !Sub '${EnvironmentName}-${ServiceName}'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Command:
+            Fn::If:
+              - HasAppCommand
+              - !Ref AppCommand
+              - !Ref 'AWS::NoValue'
+          EnvironmentFiles:
+            - Fn::If:
+              - HasAppEnvFile
+              - Type: 's3'
+                Value: !Join ['/', [!Ref AppEnvBucket, !Ref AppEnvFile]]
+              - !Ref 'AWS::NoValue'
+          Essential: true
+          Image: !Ref AppImageUri
+          LinuxParameters:
+            InitProcessEnabled: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref TaskLogGroup
+              awslogs-stream-prefix: app
+          Memory: !Ref AppMemoryHardLimit
+          MemoryReservation: !Ref AppMemorySoftLimit
+          Name: app
+          PortMappings:
+            - Fn::If:
+              - EnableContainerPort
+              - ContainerPort: !Ref ContainerPort
+                HostPort: !Ref ContainerPort
+                Protocol: tcp
+              - !Ref 'AWS::NoValue'
+          ReadonlyRootFilesystem: false
+        - Fn::If:
+          - HasWorkerContainer
+          - Command:
+              Fn::If:
+                - HasWorkerCommand
+                - !Ref WorkerCommand
+                - !Ref 'AWS::NoValue'
+            EnvironmentFiles:
+              - Fn::If:
+                - HasWorkerEnvFile
+                - Type: 's3'
+                  Value: !Join ['/', [!Ref WorkerEnvBucket, !Ref WorkerEnvFile]]
+                - !Ref 'AWS::NoValue'
+            Essential: true
+            Image: !Ref WorkerImageUri
+            LinuxParameters:
+              InitProcessEnabled: true
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-region: !Ref AWS::Region
+                awslogs-group: !Ref TaskLogGroup
+                awslogs-stream-prefix: worker
+            Memory: !Ref WorkerMemoryHardLimit
+            MemoryReservation: !Ref WorkerMemorySoftLimit
+            Name: worker
+            ReadonlyRootFilesystem: false
+          - !Ref 'AWS::NoValue'
+      Cpu: !Ref TaskCpu
+      ExecutionRoleArn: !GetAtt 'ExecutionRole.Arn'
+      Family: !Sub '${EnvironmentName}-${ServiceName}'
+      Memory: !Ref TaskMemory
+      NetworkMode: 'awsvpc'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      CapacityProviderStrategy:
+        - Fn::If:
+          - HasCapacityProviderName
+          - CapacityProvider: CapacityProviderName
+          - !Ref 'AWS::NoValue'
+      Cluster: !Ref ClusterName
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        MaximumPercent: !Ref MaximumPercent
+        MinimumHealthyPercent: !Ref MinimumHealthyPercent
+      DeploymentController:
+        Type: !Ref DeploymentControllerName
+      DesiredCount: !Ref DesiredCount
+      EnableECSManagedTags: true
+      EnableExecuteCommand: true
+      LaunchType: !Ref LaunchType
+      LoadBalancers:
+        - Fn::If:
+          - EnableContainerPortAndEnableELB
+          - ContainerName: app
+            ContainerPort: !Ref ContainerPort
+            TargetGroupArn: !Ref ELBTargetGroupArn
+          - !Ref 'AWS::NoValue'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: !Ref AssignPublicIp
+          SecurityGroups:
+            - !GetAtt 'SecurityGroup.GroupId'
+          Subnets: !Ref SubnetIds
+      PropagateTags: TASK_DEFINITION
+      ServiceName: !Sub '${EnvironmentName}-${ServiceName}'
+      ServiceRegistries:
+        - Fn::If:
+          - EnableContainerPortAndEnableServiceDiscovery
+          - ContainerName: app
+            ContainerPort: !Ref ContainerPort
+            RegistryArn: !GetAtt 'ServiceRegistry.Arn'
+          - !Ref 'AWS::NoValue'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      TaskDefinition: !Ref TaskDefinition
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamSecurityGroupId:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/service/${ServiceName}/security-group/id'
+      Type: 'String'
+      Value: !GetAtt 'SecurityGroup.GroupId'
+
+  SSMParamExecutionRoleArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/service/${ServiceName}/execution-role/arn'
+      Type: 'String'
+      Value: !GetAtt 'ExecutionRole.Arn'
+
+  SSMParamTaskRoleArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/service/${ServiceName}/task-role/arn'
+      Type: 'String'
+      Value: !GetAtt 'TaskRole.Arn'
+
+  SSMParamTaskLogGroupArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/service/${ServiceName}/task-log-group/arn'
+      Type: 'String'
+      Value: !GetAtt 'TaskLogGroup.Arn'
+
+  SSMParamTaskDefinitionArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/service/${ServiceName}/task-definition/arn'
+      Type: 'String'
+      Value: !Ref TaskDefinition
+
+  SSMParamServiceArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/service/${ServiceName}/arn'
+      Type: 'String'
+      Value: !Ref Service
+
+  SSMParamServiceName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/service/${ServiceName}/name'
+      Type: 'String'
+      Value: !GetAtt 'Service.Name'
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  SecurityGroupId:
+    Description: 'The VPC Security Group ID used by the tasks in this ECS Service.'
+    Value: !GetAtt 'SecurityGroup.GroupId'
+    Export:
+      Name: !Sub '${AWS::StackName}:SecurityGroupId'
+
+  ExecutionRoleArn:
+    Description: 'The IAM Role used by the ECS Service as execution role.'
+    Value: !GetAtt 'ExecutionRole.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:ExecutionRoleArn'
+
+  TaskRoleArn:
+    Description: 'The IAM Role used by the ECS Service as task role.'
+    Value: !GetAtt 'TaskRole.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:TaskRoleArn'
+
+  TaskLogGroupArn:
+    Description: 'The Log Group ARN used by the tasks in this ECS Service.'
+    Value: !GetAtt 'TaskLogGroup.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:TaskLogGroupArn'
+
+  TaskDefinitionArn:
+    Description: 'The task definition ARN used in this ECS Service.'
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}:TaskDefinitionArn'
+
+  ServiceArn:
+    Description: 'The ECS Service ARN.'
+    Value: !Ref Service
+    Export:
+      Name: !Sub '${AWS::StackName}:ServiceArn'
+
+  ServiceName:
+    Description: 'The ECS Service Name.'
+    Value: !GetAtt 'Service.Name'
+    Export:
+      Name: !Sub '${AWS::StackName}:ServiceName'

@@ -1,0 +1,662 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates a scalable VPC: Multi-AZ, public and private subnets, and managed NAT gateways.'
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+    Default: ''
+  CidrClassB:
+    Description: 'Class B of VPC CIDR (10.XXX.0.0/16)'
+    Type: Number
+    Default: 0
+    ConstraintDescription: 'Must be in the range [0-255]'
+    MinValue: 0
+    MaxValue: 255
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+
+Resources:
+  VirtualNetwork:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Sub '10.${CidrClassB}.0.0/16'
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub 'vpc-${EnvironmentName}-${AWS::StackName}'
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub 'igw-${EnvironmentName}-${AWS::StackName}'
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VirtualNetwork
+      InternetGatewayId: !Ref InternetGateway
+  #################################
+  ######## Subnet A or AZA ########
+  #################################
+  SubnetAPublic:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Sub '10.${CidrClassB}.1.0/24' # 254 hosts
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'A public'
+        - Key: Reach
+          Value: public
+        - Key: VPC
+          Value: !GetAtt 'VirtualNetwork.CidrBlock'
+  SubnetAPrivate:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Sub '10.${CidrClassB}.2.0/24' # 254 hosts
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'A private'
+        - Key: Reach
+          Value: private
+        - Key: VPC
+          Value: !GetAtt 'VirtualNetwork.CidrBlock'
+  #################################
+  ######## Subnet B or AZB ########
+  #################################
+  SubnetBPublic:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Sub '10.${CidrClassB}.3.0/24' # 254 hosts
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'B public'
+        - Key: Reach
+          Value: public
+        - Key: VPC
+          Value: !GetAtt 'VirtualNetwork.CidrBlock'
+  SubnetBPrivate:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Sub '10.${CidrClassB}.4.0/24' # 254 hosts
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'B private'
+        - Key: Reach
+          Value: private
+        - Key: VPC
+          Value: !GetAtt 'VirtualNetwork.CidrBlock'
+  #################################
+  ######## Subnet C or AZC ########
+  #################################
+  SubnetCPublic:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: !Sub '10.${CidrClassB}.5.0/24' # 254 hosts
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'C public'
+        - Key: Reach
+          Value: public
+        - Key: VPC
+          Value: !GetAtt 'VirtualNetwork.CidrBlock'
+  SubnetCPrivate:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: !Sub '10.${CidrClassB}.6.0/24' # 254 hosts
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'C private'
+        - Key: Reach
+          Value: private
+        - Key: VPC
+          Value: !GetAtt 'VirtualNetwork.CidrBlock'
+  #################################
+  ######### Route Tables ##########
+  #################################
+  RouteTableAPublic:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'A Public'
+  RouteTableAPrivate:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'A Private'
+  RouteTableBPublic:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'B Public'
+  RouteTableBPrivate:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'B Private'
+  RouteTableCPublic:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'C Public'
+  RouteTableCPrivate:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VirtualNetwork
+      Tags:
+        - Key: Name
+          Value: 'C Private'
+  RouteTableAssociationAPublic:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref SubnetAPublic
+      RouteTableId: !Ref RouteTableAPublic
+  RouteTableAssociationAPrivate:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref SubnetAPrivate
+      RouteTableId: !Ref RouteTableAPrivate
+  RouteTableAssociationBPublic:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref SubnetBPublic
+      RouteTableId: !Ref RouteTableBPublic
+  RouteTableAssociationBPrivate:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref SubnetBPrivate
+      RouteTableId: !Ref RouteTableBPrivate
+  RouteTableAssociationCPublic:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref SubnetCPublic
+      RouteTableId: !Ref RouteTableCPublic
+  RouteTableAssociationCPrivate:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref SubnetCPrivate
+      RouteTableId: !Ref RouteTableCPrivate
+  RouteTablePublicAInternetRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTableAPublic
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+  RouteTablePublicBInternetRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTableBPublic
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+  RouteTablePublicCInternetRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTableCPublic
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+  RouteTablePrivateAInternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableAPrivate
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+  RouteTablePrivateBInternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableBPrivate
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway2
+  RouteTablePrivateCInternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableCPrivate
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway3
+  #################################
+  ######### NAT Gateways ##########
+  #################################
+  NAT1EIP:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: 'A Public'
+  NAT2EIP:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: 'B Public'
+  NAT3EIP:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: 'C Public'
+  NATGateway1:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT1EIP.AllocationId
+      SubnetId: !Ref SubnetAPublic
+      Tags:
+        - Key: Name
+          Value: 'A Public'
+  NATGateway2:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT2EIP.AllocationId
+      SubnetId: !Ref SubnetBPublic
+      Tags:
+        - Key: Name
+          Value: 'B Public'
+  NATGateway3:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT3EIP.AllocationId
+      SubnetId: !Ref SubnetCPublic
+      Tags:
+        - Key: Name
+          Value: 'C Public'
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+  SSMParamVPCId:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/id
+      Type: 'String'
+      Description: !Ref VirtualNetwork
+      Value: !Ref VirtualNetwork
+  SSMParamVPCCidr:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/cidr
+      Type: 'String'
+      Description: !GetAtt 'VirtualNetwork.CidrBlock'
+      Value: !GetAtt 'VirtualNetwork.CidrBlock'
+  SSMParamInternetGateway:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/igw
+      Type: 'String'
+      Description: !Ref InternetGateway
+      Value: !Ref InternetGateway
+  SSMParamSubnetsPublic:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnets-public
+      Type: 'String'
+      Description: !Join [',', [!Ref SubnetAPublic, !Ref SubnetBPublic, !Ref SubnetCPublic]]
+      Value: !Join [',', [!Ref SubnetAPublic, !Ref SubnetBPublic, !Ref SubnetCPublic]]
+  SSMParamSubnetsPrivate:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnets-private
+      Type: 'String'
+      Description: !Join [',', [!Ref SubnetAPrivate, !Ref SubnetBPrivate, !Ref SubnetCPrivate]]
+      Value: !Join [',', [!Ref SubnetAPrivate, !Ref SubnetBPrivate, !Ref SubnetCPrivate]]
+  SSMParamRouteTablesPrivate:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/rt-private
+      Type: 'String'
+      Description: !Join [',', [!Ref RouteTableAPrivate, !Ref RouteTableBPrivate, !Ref RouteTableCPrivate]]
+      Value: !Join [',', [!Ref RouteTableAPrivate, !Ref RouteTableBPrivate, !Ref RouteTableCPrivate]]
+  SSMParamRouteTablesPublic:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/rt-public
+      Type: 'String'
+      Description: !Join [',', [!Ref RouteTableAPublic, !Ref RouteTableBPublic, !Ref RouteTableCPublic]]
+      Value: !Join [',', [!Ref RouteTableAPublic, !Ref RouteTableBPublic, !Ref RouteTableCPublic]]
+  SSMParamSubnetAPublic:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-a-public
+      Type: 'String'
+      Description: !Ref SubnetAPublic
+      Value: !Ref SubnetAPublic
+  SSMParamSubnetAPublicCidr:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-a-public-cidr
+      Type: 'String'
+      Description: !Sub '10.${CidrClassB}.1.0/24'
+      Value: !Sub '10.${CidrClassB}.1.0/24'
+  SSMParamRouteTableAPublic:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/rt-a-public
+      Type: 'String'
+      Description: !Ref RouteTableAPublic
+      Value: !Ref RouteTableAPublic
+  SSMParamSubnetAPrivate:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-a-private
+      Type: 'String'
+      Description: !Ref SubnetAPrivate
+      Value: !Ref SubnetAPrivate
+  SSMParamSubnetAPrivateCidr:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-a-private-cidr
+      Type: 'String'
+      Description: !Sub '10.${CidrClassB}.2.0/24'
+      Value: !Sub '10.${CidrClassB}.2.0/24'
+  SSMParamRouteTableAPrivate:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/rt-a-private
+      Type: 'String'
+      Description: !Ref RouteTableAPrivate
+      Value: !Ref RouteTableAPrivate
+  SSMParamSubnetBPublic:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-b-public
+      Type: 'String'
+      Description: !Ref SubnetBPublic
+      Value: !Ref SubnetBPublic
+  SSMParamSubnetBPublicCidr:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-b-public-cidr
+      Type: 'String'
+      Description: !Sub '10.${CidrClassB}.3.0/24'
+      Value: !Sub '10.${CidrClassB}.3.0/24'
+  SSMParamRouteTableBPublic:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/rt-b-public
+      Type: 'String'
+      Description: !Ref RouteTableBPublic
+      Value: !Ref RouteTableBPublic
+  SSMParamSubnetBPrivate:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-b-private
+      Type: 'String'
+      Description: !Ref SubnetBPrivate
+      Value: !Ref SubnetBPrivate
+  SSMParamSubnetBPrivateCidr:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-b-private-cidr
+      Type: 'String'
+      Description: !Sub '10.${CidrClassB}.4.0/24'
+      Value: !Sub '10.${CidrClassB}.4.0/24'
+  SSMParamRouteTableBPrivate:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/rt-b-private
+      Type: 'String'
+      Description: !Ref RouteTableBPrivate
+      Value: !Ref RouteTableBPrivate
+  SSMParamSubnetCPublic:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-c-public
+      Type: 'String'
+      Description: !Ref SubnetCPublic
+      Value: !Ref SubnetCPublic
+  SSMParamSubnetCPublicCidr:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-c-public-cidr
+      Type: 'String'
+      Description: !Sub '10.${CidrClassB}.5.0/24'
+      Value: !Sub '10.${CidrClassB}.5.0/24'
+  SSMParamRouteTableCPublic:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/rt-c-public
+      Type: 'String'
+      Description: !Ref RouteTableCPublic
+      Value: !Ref RouteTableCPublic
+  SSMParamSubnetCPrivate:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-c-private
+      Type: 'String'
+      Description: !Ref SubnetCPrivate
+      Value: !Ref SubnetCPrivate
+  SSMParamSubnetCPrivateCidr:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/subnet-c-private-cidr
+      Type: 'String'
+      Description: !Sub '10.${CidrClassB}.6.0/24'
+      Value: !Sub '10.${CidrClassB}.6.0/24'
+  SSMParamRouteTableCPrivate:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cfn/${EnvironmentName}/vpc/rt-c-private
+      Type: 'String'
+      Description: !Ref RouteTableCPrivate
+      Value: !Ref RouteTableCPrivate
+
+#################################
+######### Stack Outputs #########
+#################################
+Outputs:
+  VPCStackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCStackName'
+  CidrBlock:
+    Description: 'The set of IP addresses for the VPC.'
+    Value: !GetAtt 'VirtualNetwork.CidrBlock'
+    Export:
+      Name: !Sub '${AWS::StackName}-CidrBlock'
+  VPCId:
+    Description: 'VPC ID.'
+    Value: !Ref VirtualNetwork
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCId'
+  InternetGateway:
+    Description: 'InternetGateway.'
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub '${AWS::StackName}-InternetGateway'
+  SubnetsPublic:
+    Description: 'Subnets public.'
+    Value: !Join [',', [!Ref SubnetAPublic, !Ref SubnetBPublic, !Ref SubnetCPublic]]
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetsPublic'
+  SubnetsPublicCidr:
+    Description: 'Subnets public.'
+    Value: !Sub '10.${CidrClassB}.1.0/24,10.${CidrClassB}.3.0/24,10.${CidrClassB}.5.0/24'
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetsPublicCidr'
+  SubnetsPrivate:
+    Description: 'Subnets private.'
+    Value: !Join [',', [!Ref SubnetAPrivate, !Ref SubnetBPrivate, !Ref SubnetCPrivate]]
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetsPrivate'
+  SubnetsPrivateCidr:
+    Description: 'Subnets private.'
+    Value: !Sub '10.${CidrClassB}.2.0/24,10.${CidrClassB}.4.0/24,10.${CidrClassB}.6.0/24'
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetsPrivateCidr'
+  RouteTablesPrivate:
+    Description: 'Route tables private.'
+    Value: !Join [',', [!Ref RouteTableAPrivate, !Ref RouteTableBPrivate, !Ref RouteTableCPrivate]]
+    Export:
+      Name: !Sub '${AWS::StackName}-RouteTablesPrivate'
+  RouteTablesPublic:
+    Description: 'Route tables public.'
+    Value: !Join [',', [!Ref RouteTableAPublic, !Ref RouteTableBPublic, !Ref RouteTableCPublic]]
+    Export:
+      Name: !Sub '${AWS::StackName}-RouteTablesPublic'
+  SubnetAPublic:
+    Description: 'Subnet A public.'
+    Value: !Ref SubnetAPublic
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetAPublic'
+  SubnetAPublicCidr:
+    Description: 'Subnet A public cidr.'
+    Value: !Sub '10.${CidrClassB}.1.0/24'
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetAPublicCidr'
+  RouteTableAPublic:
+    Description: 'Route table A public.'
+    Value: !Ref RouteTableAPublic
+    Export:
+      Name: !Sub '${AWS::StackName}-RouteTableAPublic'
+  SubnetAPrivate:
+    Description: 'Subnet A private.'
+    Value: !Ref SubnetAPrivate
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetAPrivate'
+  SubnetAPrivateCidr:
+    Description: 'Subnet A private cidr.'
+    Value: !Sub '10.${CidrClassB}.2.0/24'
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetAPrivateCidr'
+  RouteTableAPrivate:
+    Description: 'Route table A private.'
+    Value: !Ref RouteTableAPrivate
+    Export:
+      Name: !Sub '${AWS::StackName}-RouteTableAPrivate'
+  SubnetBPublic:
+    Description: 'Subnet B public.'
+    Value: !Ref SubnetBPublic
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetBPublic'
+  SubnetBPublicCidr:
+    Description: 'Subnet B public cidr.'
+    Value: !Sub '10.${CidrClassB}.3.0/24'
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetBPublicCidr'
+  RouteTableBPublic:
+    Description: 'Route table B public.'
+    Value: !Ref RouteTableBPublic
+    Export:
+      Name: !Sub '${AWS::StackName}-RouteTableBPublic'
+  SubnetBPrivate:
+    Description: 'Subnet B private.'
+    Value: !Ref SubnetBPrivate
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetBPrivate'
+  SubnetBPrivateCidr:
+    Description: 'Subnet B private cidr.'
+    Value: !Sub '10.${CidrClassB}.4.0/24'
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetBPrivateCidr'
+  RouteTableBPrivate:
+    Description: 'Route table B private.'
+    Value: !Ref RouteTableBPrivate
+    Export:
+      Name: !Sub '${AWS::StackName}-RouteTableBPrivate'
+  SubnetCPublic:
+    Description: 'Subnet C public.'
+    Value: !Ref SubnetCPublic
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetCPublic'
+  SubnetCPublicCidr:
+    Description: 'Subnet C public cidr.'
+    Value: !Sub '10.${CidrClassB}.5.0/24'
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetCPublicCidr'
+  RouteTableCPublic:
+    Description: 'Route table C public.'
+    Value: !Ref RouteTableCPublic
+    Export:
+      Name: !Sub '${AWS::StackName}-RouteTableCPublic'
+  SubnetCPrivate:
+    Description: 'Subnet C private.'
+    Value: !Ref SubnetCPrivate
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetCPrivate'
+  SubnetCPrivateCidr:
+    Description: 'Subnet C private cidr.'
+    Value: !Sub '10.${CidrClassB}.6.0/24'
+    Export:
+      Name: !Sub '${AWS::StackName}-SubnetCPrivateCidr'
+  RouteTableCPrivate:
+    Description: 'Route table C private.'
+    Value: !Ref RouteTableCPrivate
+    Export:
+      Name: !Sub '${AWS::StackName}-RouteTableCPrivate'

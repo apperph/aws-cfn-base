@@ -1,0 +1,132 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an AWS CloudMap Namespace and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  NamespaceName:
+    Description: 'The name of the AWS CloudMap Namespace.'
+    Type: String
+
+  Type:
+    Description: 'The type of the AWS CloudMap Namespace.'
+    Type: String
+    Default: 'private-dns'
+    AllowedValues:
+      - 'private-dns'
+      - 'public-dns'
+
+  VpcId:
+    Description: 'VPC ID that will be associated with the Elastic Beanstalk Environment.'
+    Type: String
+    Default: ''
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+  IsPrivateDns: !Equals [!Ref Type, 'private-dns']
+  IsPublicDns: !Equals [!Ref Type, 'public-dns']
+
+Resources:
+  PrivateDnsNamespace:
+    Condition: IsPrivateDns
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Ref NamespaceName
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      Vpc: !Ref VpcId
+
+  PublicDnsNamespace:
+    Condition: IsPublicDns
+    Type: AWS::ServiceDiscovery::PublicDnsNamespace
+    Properties:
+      Name: !Ref NamespaceName
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamNamespaceId:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/cloud-map-ns/${NamespaceName}/id'
+      Type: 'String'
+      Value:
+        Fn::If:
+          - IsPrivateDns
+          - !GetAtt 'PrivateDnsNamespace.Id'
+          - Fn::If:
+            - IsPublicDns
+            - !GetAtt 'PublicDnsNamespace.Id'
+            - '~'
+
+  SSMParamNamespaceArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/cloud-map-ns/${NamespaceName}/arn'
+      Type: 'String'
+      Value:
+        Fn::If:
+          - IsPrivateDns
+          - !GetAtt 'PrivateDnsNamespace.Arn'
+          - Fn::If:
+            - IsPublicDns
+            - !GetAtt 'PublicDnsNamespace.Arn'
+            - '~'
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  NamespaceId:
+    Description: 'AWS CloudMap Namespace ID.'
+    Value:
+      Fn::If:
+        - IsPrivateDns
+        - !GetAtt 'PrivateDnsNamespace.Id'
+        - Fn::If:
+          - IsPublicDns
+          - !GetAtt 'PublicDnsNamespace.Id'
+          - '~'
+    Export:
+      Name: !Sub '${AWS::StackName}:NamespaceId'
+
+  NamespaceArn:
+    Description: 'AWS CloudMap Namespace ARN.'
+    Value:
+      Fn::If:
+        - IsPrivateDns
+        - !GetAtt 'PrivateDnsNamespace.Arn'
+        - Fn::If:
+          - IsPublicDns
+          - !GetAtt 'PublicDnsNamespace.Arn'
+          - '~'
+    Export:
+      Name: !Sub '${AWS::StackName}:NamespaceArn'

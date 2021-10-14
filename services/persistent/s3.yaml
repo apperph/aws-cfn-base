@@ -1,0 +1,153 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an S3 Bucket and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  BucketName:
+    Description: 'The name to use for the S3 bucket.'
+    Type: String
+
+  AccessControl:
+    Description: 'A canned access control list (ACL) that grants predefined permissions to the bucket.'
+    Type: String
+    Default: 'Private'
+    AllowedValues:
+      - 'Private'
+      - 'PublicRead'
+      - 'PublicReadWrite'
+      - 'AuthenticatedRead'
+      - 'LogDeliveryWrite'
+      - 'BucketOwnerRead'
+      - 'BucketOwnerFullControl'
+      - 'AwsExecRead'
+  EnablePublicAccessBlock:
+    Description: 'Enables the public access block configuration on the S3 Bucket.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  EnableVersioning:
+    Description: 'Enabling the object versioning on the S3 Bucket.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+  EnablePublicAccessBlock: !Equals [!Ref EnablePublicAccessBlock, 'true']
+  EnableVersioning: !Equals [!Ref EnableVersioning, 'true']
+
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: !Ref AccessControl
+      BucketName: !Sub '${EnvironmentName}-${BucketName}-${AWS::Region}-${AWS::AccountId}'
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: 'BucketOwnerPreferred'
+      PublicAccessBlockConfiguration:
+        Fn::If:
+          - EnablePublicAccessBlock
+          - BlockPublicAcls: true
+            BlockPublicPolicy: true
+            IgnorePublicAcls: true
+            RestrictPublicBuckets: true
+          - !Ref 'AWS::NoValue'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VersioningConfiguration:
+        Fn::If:
+          - EnableVersioning
+          - Status: 'Enabled'
+          - !Ref 'AWS::NoValue'
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamBucketName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/s3/${BucketName}/name'
+      Type: 'String'
+      Value: !Ref Bucket
+
+  SSMParamBucketArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/s3/${BucketName}/arn'
+      Type: 'String'
+      Value: !GetAtt 'Bucket.Arn'
+
+  SSMParamBucketDomainName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/s3/${BucketName}/domain-name'
+      Type: 'String'
+      Value: !GetAtt 'Bucket.DomainName'
+
+  SSMParamBucketRegionalDomainName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/s3/${BucketName}/regional-domain-name'
+      Type: 'String'
+      Value: !GetAtt 'Bucket.RegionalDomainName'
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  BucketName:
+    Description: 'S3 Bucket Name'
+    Value: !Ref Bucket
+    Export:
+      Name: !Sub '${AWS::StackName}:BucketName'
+
+  BucketArn:
+    Description: 'S3 Bucket ARN'
+    Value: !GetAtt 'Bucket.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:BucketArn'
+
+  BucketDomainName:
+    Description: 'S3 Bucket Domain Name'
+    Value: !GetAtt 'Bucket.DomainName'
+    Export:
+      Name: !Sub '${AWS::StackName}:BucketDomainName'
+
+  BucketRegionalDomainName:
+    Description: 'S3 Bucket Regional Domain Name'
+    Value: !GetAtt 'Bucket.RegionalDomainName'
+    Export:
+      Name: !Sub '${AWS::StackName}:BucketRegionalDomainName'

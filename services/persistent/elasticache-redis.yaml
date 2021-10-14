@@ -1,0 +1,235 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an ElastiCache cluster/instance and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  ClusterName:
+    Description: 'The name of the cluster.'
+    Type: String
+
+  NodeType:
+    Description: 'ElastiCache Cluster Node Type.'
+    Type: String
+    Default: 'cache.t3.small'
+  EngineVersion:
+    Description: 'ElastiCache Redis Engine Version.'
+    Type: String
+  MultiAZ:
+    Description: 'Specifies whether the database instance is a multiple Availability Zone deployment.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  AutomaticFailoverEnabled:
+    Description: 'Specifies whether a read-only replica is automatically promoted to read/write primary if the existing primary fails.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  ReplicasPerNodeGroup:
+    Description: 'For Clustered Redis. Specifies the number of replica nodes in each node group (shard).'
+    Type: Number
+    Default: 0
+  NumNodeGroups:
+    Description: 'For Clustered Redis. Specifies the number of node groups.'
+    Type: Number
+    Default: 1
+
+  VpcId:
+    Description: 'VPC ID that will be associated with this resource.'
+    Type: String
+  SubnetIds:
+    Description: 'List of subnet IDs that will be associated with this resource.'
+    Type: CommaDelimitedList
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+  IsClusterMode: !Not [!Equals [!Ref NumNodeGroups, 1]]
+  HasSSMParameterIntegrationAndIsClusterMode: !And [!Condition HasSSMParameterIntegration, !Condition IsClusterMode]
+  HasSSMParameterIntegrationAndIsNonClusterMode: !And [!Condition HasSSMParameterIntegration, !Not [!Condition IsClusterMode]]
+  MultiAZ: !Equals [!Ref MultiAZ, 'true']
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for ElastiCache ${EnvironmentName}-${ClusterName}'
+      GroupName: !Sub '${EnvironmentName}-${ClusterName}-elasticache-sg'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VpcId: !Ref VpcId
+
+  SubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub '${EnvironmentName}-${ClusterName}-elasticache-subnets'
+      Description: !Sub 'Subnet group for ElastiCache ${EnvironmentName}-${ClusterName}'
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  ReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      AutomaticFailoverEnabled: !Ref AutomaticFailoverEnabled
+      CacheNodeType: !Ref NodeType
+      CacheSubnetGroupName: !Ref SubnetGroup
+      Engine: 'redis'
+      EngineVersion: !Ref EngineVersion
+      MultiAZEnabled: !If [MultiAZ, true, false]
+      NumNodeGroups: !Ref NumNodeGroups
+      Port: 6379
+      ReplicasPerNodeGroup: !Ref ReplicasPerNodeGroup
+      ReplicationGroupDescription: !Sub '${EnvironmentName}-${ClusterName}'
+      ReplicationGroupId: !Sub '${EnvironmentName}-${ClusterName}'
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamSecurityGroupId:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/redis/${ClusterName}/security-group/id'
+      Type: 'String'
+      Description: !GetAtt 'SecurityGroup.GroupId'
+      Value: !GetAtt 'SecurityGroup.GroupId'
+
+  SSMParamConfigurationEndpointAddress:
+    Condition: HasSSMParameterIntegrationAndIsClusterMode
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/redis/${ClusterName}/configuration-endpoint/address'
+      Type: 'String'
+      Description: !GetAtt 'ReplicationGroup.ConfigurationEndPoint.Address'
+      Value: !GetAtt 'ReplicationGroup.ConfigurationEndPoint.Address'
+
+  SSMParamConfigurationEndpointPort:
+    Condition: HasSSMParameterIntegrationAndIsClusterMode
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/redis/${ClusterName}/configuration-endpoint/port'
+      Type: 'String'
+      Description: !GetAtt 'ReplicationGroup.ConfigurationEndPoint.Port'
+      Value: !GetAtt 'ReplicationGroup.ConfigurationEndPoint.Port'
+
+  SSMParamPrimaryEndpointAddress:
+    Condition: HasSSMParameterIntegrationAndIsNonClusterMode
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/redis/${ClusterName}/primary-endpoint/address'
+      Type: 'String'
+      Description: !GetAtt 'ReplicationGroup.PrimaryEndPoint.Address'
+      Value: !GetAtt 'ReplicationGroup.PrimaryEndPoint.Address'
+
+  SSMParamPrimaryEndpointPort:
+    Condition: HasSSMParameterIntegrationAndIsNonClusterMode
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/redis/${ClusterName}/primary-endpoint/port'
+      Type: 'String'
+      Description: !GetAtt 'ReplicationGroup.PrimaryEndPoint.Port'
+      Value: !GetAtt 'ReplicationGroup.PrimaryEndPoint.Port'
+
+  SSMParamReaderEndpointAddress:
+    Condition: HasSSMParameterIntegrationAndIsNonClusterMode
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/redis/${ClusterName}/reader-endpoint/address'
+      Type: 'String'
+      Description: !GetAtt 'ReplicationGroup.ReaderEndPoint.Address'
+      Value: !GetAtt 'ReplicationGroup.ReaderEndPoint.Address'
+
+  SSMParamReaderEndpointPort:
+    Condition: HasSSMParameterIntegrationAndIsNonClusterMode
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/redis/${ClusterName}/reader-endpoint/port'
+      Type: 'String'
+      Description: !GetAtt 'ReplicationGroup.ReaderEndPoint.Port'
+      Value: !GetAtt 'ReplicationGroup.ReaderEndPoint.Port'
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  SecurityGroupId:
+    Description: 'VPC Security Group ID used by the ElastiCache Redis cluster.'
+    Value: !GetAtt 'SecurityGroup.GroupId'
+    Export:
+      Name: !Sub '${AWS::StackName}:SecurityGroupId'
+
+  ConfigurationEndpointAddress:
+    Condition: HasSSMParameterIntegrationAndIsClusterMode
+    Description: 'ElastiCache Redis Configuration Endpoint Address'
+    Value: !GetAtt 'ReplicationGroup.ConfigurationEndPoint.Address'
+    Export:
+      Name: !Sub '${AWS::StackName}:ConfigurationEndpointAddress'
+
+  ConfigurationEndpointPort:
+    Condition: HasSSMParameterIntegrationAndIsClusterMode
+    Description: 'ElastiCache Redis Configuration Endpoint Port'
+    Value: !GetAtt 'ReplicationGroup.ConfigurationEndPoint.Port'
+    Export:
+      Name: !Sub '${AWS::StackName}:ConfigurationEndpointPort'
+
+  PrimaryEndpointAddress:
+    Condition: HasSSMParameterIntegrationAndIsNonClusterMode
+    Description: 'ElastiCache Redis Primary Endpoint Address'
+    Value: !GetAtt 'ReplicationGroup.PrimaryEndPoint.Address'
+    Export:
+      Name: !Sub '${AWS::StackName}:PrimaryEndpointAddress'
+
+  PrimaryEndpointPort:
+    Condition: HasSSMParameterIntegrationAndIsNonClusterMode
+    Description: 'ElastiCache Redis Primary Endpoint Port'
+    Value: !GetAtt 'ReplicationGroup.PrimaryEndPoint.Port'
+    Export:
+      Name: !Sub '${AWS::StackName}:PrimaryEndpointPort'
+
+  ReaderEndpointAddress:
+    Condition: HasSSMParameterIntegrationAndIsNonClusterMode
+    Description: 'ElastiCache Redis Read Endpoint Address'
+    Value: !GetAtt 'ReplicationGroup.ReaderEndPoint.Address'
+    Export:
+      Name: !Sub '${AWS::StackName}:ReaderEndpointAddress'
+
+  ReaderEndpointPort:
+    Condition: HasSSMParameterIntegrationAndIsNonClusterMode
+    Description: 'ElastiCache Redis Read Endpoint Port'
+    Value: !GetAtt 'ReplicationGroup.ReaderEndPoint.Port'
+    Export:
+      Name: !Sub '${AWS::StackName}:ReaderEndpointPort'

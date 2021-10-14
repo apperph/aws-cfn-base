@@ -1,0 +1,2 @@
+AWS CloudFormation Base Templates
+Copyright 2021 Apper Digital, Inc. or its affiliates. All Rights Reserved. 

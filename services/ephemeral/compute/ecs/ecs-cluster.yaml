@@ -1,0 +1,369 @@
+# **WARNING** This template creates AWS resources. You will be billed for the AWS resources used if you create a stack from this template.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an Elastic Container Service Cluster and related resources.'
+
+Metadata:
+  Authors:
+    Description: 'Apper DevOps (developers@apper.ph)'
+  License:
+    Description: >
+      'Copyright 2021 Apper Digital Inc. and its affiliates. All Rights Reserved.
+      SPDX-License-Identifier:  Apache-2.0'
+
+Parameters:
+  EnvironmentName:
+    Description: 'The name of environment for the current stack (e.g. dev, test, staging, beta, production).'
+    Type: String
+  ClusterName:
+    Description: 'The name of the Elastic Container Service Cluster.'
+    Type: String
+
+  EnableEC2:
+    Description: 'Enables EC2 capacity provider.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  EnableFargate:
+    Description: 'Enables Fargate and Fargate Spot capacity provider.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  ASGDesiredCapacity:
+    Description: 'The desired capacity is the initial capacity of the Auto Scaling group at the time of its creation and the capacity it attempts to maintain. Requires EnableEC2 parameter to be set to true.'
+    Type: Number
+    Default: 4
+  ASGMaxSize:
+    Description: 'The maximum size of the group.'
+    Type: Number
+    Default: 6
+  ASGMinSize:
+    Description: 'The minimum size of the group.'
+    Type: Number
+    Default: 2
+  ASGTerminationPolicies:
+    Description: 'A policy or a list of policies that are used to select the instances to terminate.'
+    Type: CommaDelimitedList
+    Default: 'OldestInstance,OldestLaunchConfiguration,OldestLaunchTemplate'
+
+  EC2InstanceType:
+    Description: 'The instance type used by EC2 capacity provider.'
+    Type: String
+    Default: 't3.micro'
+  EC2EnableInstanceDistribution:
+    Description: 'Enable EC2 instance distribution across on-demand and spot instances.'
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  EC2InstanceDistributionOnDemandBaseCapacity:
+    Description: 'The minimum amount of the Auto Scaling group capacity that must be fulfilled by On-Demand Instances.'
+    Type: Number
+    Default: 0
+  EC2InstanceDistributionOnDemandPercentageAboveBaseCapacity:
+    Description: 'Controls the percentages of On-Demand Instances and Spot Instances for your additional capacity beyond OnDemandBaseCapacity.'
+    Type: Number
+    Default: 100
+  EC2InstanceDistributionSpotAllocationStrategy:
+    Description: 'Specifies the spot allocation strategy.'
+    Type: String
+    Default: 'lowest-price'
+    AllowedValues:
+      - 'lowest-price'
+      - 'capacity-optimized'
+      - 'capacity-optimized-prioritized'
+  EC2InstanceDistributionSpotInstancePools:
+    Description: 'The number of Spot Instance pools to use to allocate your Spot capacity.'
+    Type: Number
+    Default: 2
+  EC2InstanceDistributionSpotMaxPrice:
+    Description: 'The maximum price per unit hour that you are willing to pay for a Spot Instance.'
+    Type: String
+    Default: '1'
+
+  VpcId:
+    Description: 'VPC ID that will be associated with the Elastic Beanstalk Environment.'
+    Type: String
+  SubnetIds:
+    Description: 'List of subnet IDs that will be associated with the Elastic Beanstalk Application.'
+    Type: CommaDelimitedList
+
+  HasSSMParameterIntegration:
+    Description: 'Enabling this option will use SSM Parameter Store to store parameter values that can be used by other AWS Cloudformation stacks.'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasSSMParameterIntegration: !Equals [!Ref HasSSMParameterIntegration, 'true']
+  EnableEC2: !Equals [!Ref EnableEC2, 'true']
+  EnableFargate: !Equals [!Ref EnableFargate, 'true']
+  EnableEC2AndHasSSMParameterIntegration: !And [!Condition EnableEC2, !Condition HasSSMParameterIntegration]
+  EC2EnableInstanceDistribution: !Equals [!Ref EC2EnableInstanceDistribution, 'true']
+
+Resources:
+  InstanceRole:
+    Condition: EnableEC2
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Description: !Sub 'Instance role for Elastic Container Service ${EnvironmentName}-${ClusterName} EC2 Instances'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role'
+      Path: /
+      RoleName: !Sub '${EnvironmentName}-${ClusterName}-ecs-ec2-instance-role'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  InstanceProfile:
+    Condition: EnableEC2
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${EnvironmentName}-${ClusterName}'
+      Roles:
+        - !Ref InstanceRole
+
+  SecurityGroup:
+    Condition: EnableEC2
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for Elastic Container Service ${EnvironmentName}-${ClusterName} EC2 Instances'
+      GroupName: !Sub '${EnvironmentName}-${ClusterName}-ecs-ec2-sg'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-${ClusterName}-ecs-ec2-sg'
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+      VpcId: !Ref VpcId
+
+  EC2LaunchTemplate:
+    Condition: EnableEC2
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt 'InstanceProfile.Arn'
+        ImageId: '{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id}}'
+        InstanceType: !Ref EC2InstanceType
+        Monitoring:
+          Enabled: true
+        SecurityGroupIds:
+          - !GetAtt 'SecurityGroup.GroupId'
+        TagSpecifications:
+          - ResourceType: 'instance'
+            Tags:
+              - Key: Name
+                Value: !Sub '${EnvironmentName}-${ClusterName}-ecs'
+              - Key: EnvironmentName
+                Value: !Ref EnvironmentName
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            echo ECS_CLUSTER=${EnvironmentName}-${ClusterName} >> /etc/ecs/ecs.config
+      LaunchTemplateName: !Sub '${EnvironmentName}-${ClusterName}-ecs-asg'
+
+  AutoScalingGroup:
+    Condition: EnableEC2
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${EnvironmentName}-${ClusterName}-asg'
+      CapacityRebalance: true
+      DesiredCapacity: !Ref ASGDesiredCapacity
+      HealthCheckType: 'EC2'
+      LaunchTemplate:
+        Fn::If:
+          - EC2EnableInstanceDistribution
+          - !Ref 'AWS::NoValue'
+          - LaunchTemplateId: !Ref EC2LaunchTemplate
+            Version: !GetAtt 'EC2LaunchTemplate.LatestVersionNumber'
+      MaxSize: !Ref ASGMaxSize
+      MetricsCollection:
+        - Granularity: '1Minute'
+      MinSize: !Ref ASGMinSize
+      MixedInstancesPolicy:
+        Fn::If:
+          - EC2EnableInstanceDistribution
+          - InstancesDistribution:
+              OnDemandBaseCapacity: !Ref EC2InstanceDistributionOnDemandBaseCapacity
+              OnDemandPercentageAboveBaseCapacity: !Ref EC2InstanceDistributionOnDemandPercentageAboveBaseCapacity
+              SpotAllocationStrategy: !Ref EC2InstanceDistributionSpotAllocationStrategy
+              SpotInstancePools: !Ref EC2InstanceDistributionSpotInstancePools
+              SpotMaxPrice: !Ref EC2InstanceDistributionSpotMaxPrice
+            LaunchTemplate:
+              LaunchTemplateSpecification:
+                LaunchTemplateId: !Ref EC2LaunchTemplate
+                Version: !GetAtt 'EC2LaunchTemplate.LatestVersionNumber'
+          - !Ref 'AWS::NoValue'
+      Tags:
+        - Key: EnvironmentName
+          PropagateAtLaunch: true
+          Value: !Ref EnvironmentName
+      TerminationPolicies: !Ref ASGTerminationPolicies
+      VPCZoneIdentifier: !Ref SubnetIds
+
+  EC2CapacityProvider:
+    Condition: EnableEC2
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref AutoScalingGroup
+        ManagedScaling:
+          InstanceWarmupPeriod: 60
+          Status: 'ENABLED'
+          TargetCapacity: 100
+      Name: !Sub '${EnvironmentName}-${ClusterName}-ec2'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      CapacityProviders:
+        - Fn::If:
+            - EnableFargate
+            - 'FARGATE'
+            - !Ref 'AWS::NoValue'
+        - Fn::If:
+            - EnableFargate
+            - 'FARGATE_SPOT'
+            - !Ref 'AWS::NoValue'
+        - Fn::If:
+            - EnableEC2
+            - !Ref EC2CapacityProvider
+            - !Ref 'AWS::NoValue'
+      ClusterName: !Sub '${EnvironmentName}-${ClusterName}'
+      ClusterSettings:
+        - Name: 'containerInsights'
+          Value: 'enabled'
+      Tags:
+        - Key: EnvironmentName
+          Value: !Ref EnvironmentName
+
+  #################################
+  ######## Parameter Store ########
+  #################################
+
+  SSMParamEC2SecurityGroupId:
+    Condition: EnableEC2AndHasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/ec2/security-group/id'
+      Type: 'String'
+      Value: !GetAtt 'SecurityGroup.GroupId'
+
+  SSMParamEC2InstanceRoleArn:
+    Condition: EnableEC2AndHasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/ec2/instance-role/arn'
+      Type: 'String'
+      Value: !GetAtt 'InstanceRole.Arn'
+
+  SSMParamEC2LaunchTemplateID:
+    Condition: EnableEC2AndHasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/ec2/launch-template/id'
+      Type: 'String'
+      Value: !Ref EC2LaunchTemplate
+
+  SSMParamEC2AutoScalingGroupName:
+    Condition: EnableEC2AndHasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/ec2/asg/name'
+      Type: 'String'
+      Value: !Ref AutoScalingGroup
+
+  SSMParamEC2CapacityProviderName:
+    Condition: EnableEC2AndHasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/ec2/capacity-provider/name'
+      Type: 'String'
+      Value: !Ref EC2CapacityProvider
+
+  SSMParamClusterName:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/name'
+      Type: 'String'
+      Value: !Ref Cluster
+
+  SSMParamClusterArn:
+    Condition: HasSSMParameterIntegration
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/cfn/${EnvironmentName}/ecs/${ClusterName}/arn'
+      Type: 'String'
+      Value: !GetAtt 'Cluster.Arn'
+
+Outputs:
+  StackName:
+    Description: 'Stack name'
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}:StackName'
+
+  EC2SecurityGroupId:
+    Condition: EnableEC2
+    Description: 'VPC Security Group ID used by EC2 instances in this ECS Cluster.'
+    Value: !GetAtt 'SecurityGroup.GroupId'
+    Export:
+      Name: !Sub '${AWS::StackName}:EC2SecurityGroupId'
+
+  EC2InstanceRoleArn:
+    Condition: EnableEC2
+    Description: 'IAM Role used by EC2 instances in this ECS Cluster.'
+    Value: !GetAtt 'InstanceRole.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:EC2InstanceRoleArn'
+
+  EC2LaunchTemplateID:
+    Condition: EnableEC2
+    Description: 'EC2 Launch Template ID used in this ECS Cluster.'
+    Value: !Ref EC2LaunchTemplate
+    Export:
+      Name: !Sub '${AWS::StackName}:EC2LaunchTemplateID'
+
+  EC2AutoScalingGroupName:
+    Condition: EnableEC2
+    Description: 'EC2 Auto-Scaling Group Name used in this ECS Cluster.'
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub '${AWS::StackName}:EC2AutoScalingGroupName'
+
+  EC2CapacityProviderName:
+    Condition: EnableEC2
+    Description: 'ECS Capacity Provider for EC2 and EC2 Spot Instances.'
+    Value: !Ref EC2CapacityProvider
+    Export:
+      Name: !Sub '${AWS::StackName}:EC2CapacityProviderName'
+
+  ClusterName:
+    Description: 'Elastic Container Service Cluster Name.'
+    Value: !Ref Cluster
+    Export:
+      Name: !Sub '${AWS::StackName}:ClusterName'
+
+  ClusterArn:
+    Description: 'Elastic Container Service Cluster ARN.'
+    Value: !GetAtt 'Cluster.Arn'
+    Export:
+      Name: !Sub '${AWS::StackName}:ClusterArn'
